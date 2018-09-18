@@ -92,11 +92,11 @@ volatile int test_isr_int = 2 ;
 
 volatile int five_msec_delay=1; //used to signal if it's ramp up or ramp down
 
-volatile int number_index,toggle =0; // used to figure out which signal sound needs to be generated
+volatile int number_index,ramp,toggle =0; // used to figure out which signal sound needs to be generated
 
 //=============================
 
-static int PushState,  prior_press,counter,sound_index, t_index=0;
+volatile int PushState,  prior_press,counter,sound_index, t_index=0;
 
 static int key_table[12];
 
@@ -120,49 +120,78 @@ void __ISR(_TIMER_2_VECTOR, ipl2) Timer2Handler(void)
         phase_accum_main += phase_incr_main  ;
         phase_accum_main1 += phase_incr_main1 ;
         counter = 0;
+        
+         //sine_index = phase_accum_main>>24 ;
+        DAC_data = sin_table[phase_accum_main>>24];
+
+
+        //sine_index = phase_accum_main>>24 ;
+        DAC_data1 = sin_table[phase_accum_main1>>24];
+
+
+
+        // === Channel A =============
+        // CS low to start transaction
+         mPORTBClearBits(BIT_4); // start transaction
+        // test for ready
+         //while (TxBufFullSPI2());
+        // write to spi2 
+
+        WriteSPI2( DAC_config_chan_A | ( ((DAC_data +DAC_data1)>>1)+ 2048));
+        
     }
     else if (toggle ==1 && number_index <t_index){
-        counter +=1;
-        
-        if (five_msec_delay == 1 && counter <= 174000 ){
-            if (counter == 174000){
-                five_msec_delay=0;
-            }
-           
-            //sound for ramp up phase
-            
-            
-        
-        }
-        else if (five_msec_delay ==0 && counter <= 2436000){
-            if (counter == 2436000){
-                five_msec_delay=1;
-            }
-          
-            //sound for full intensity phase
-            
-            
-            
-        }
-        else if (five_msec_delay ==1 && counter <= 2610000){
-            if (counter == 2610000){
-                five_msec_delay =0;
-            }
-            
-            //output sound with ramp down
+        counter =counter + 1;
+        // 5 msec time is  = 262144  which is 2^18
+
+         if (counter >= 484){
                 
-        }
-        else {
-            if (counter == 4872000){
-                counter=0; // resets the counter
-                five_msec_delay =1;
-                number_index =1+ number_index;
-                phase_accum_main1, phase_incr_main1= freq2[key_table[number_index]]; 
-                phase_accum_main, phase_incr_main = freq1[key_table[number_index]];
-            }
+              // five_msec_delay =1;
+               number_index =1+ number_index;
+               if (number_index <t_index){
+               phase_accum_main1, phase_incr_main1= freq2[key_table[number_index]]; 
+               phase_accum_main, phase_incr_main = freq1[key_table[number_index]];
+               }
+               else {
+                   toggle = 0;
+                   number_index = 0;
+                   phase_accum_main1, phase_incr_main1= 0; 
+                   phase_accum_main, phase_incr_main = 0;
+               }
+               counter=0;
+               ramp = 0;
+         }
+         else {
+             //ramp logic
+             if (counter<35){
+             }
+             else if (counter < 207){
+             
+             }
+             else if (counter < 242){
+             }
+             else {
+             
+             }
+             
+         }
+         phase_accum_main += phase_incr_main  ;
+         phase_accum_main1 += phase_incr_main1 ;
         
-        
-        }
+         //sine_index = phase_accum_main>>24 ;
+        DAC_data = sin_table[phase_accum_main>>24];
+
+
+        //sine_index = phase_accum_main1>>24 ;
+        DAC_data1 = sin_table[phase_accum_main1>>24];
+
+
+         mPORTBClearBits(BIT_4); // start transaction
+        // test for ready
+         //while (TxBufFullSPI2());
+        // write to spi2 
+
+        WriteSPI2( DAC_config_chan_A | ( ((DAC_data +DAC_data1)>>1)+ 2048));
         
     
     
@@ -171,48 +200,50 @@ void __ISR(_TIMER_2_VECTOR, ipl2) Timer2Handler(void)
         // might be the case where playback finished and no sound is coming out
         toggle = 0;
         number_index = 0;
-       //  DAC_data, DAC_data1 = 0; //tells it to output no sound
+        
+        mPORTBClearBits(BIT_4); // start transaction
+        WriteSPI2( DAC_config_chan_A | ( 2048));
     
     
     }
         
  
     
-    // main DDS phase
-    //phase_accum_main += phase_incr_main  ;
-    
-    //sine_index = phase_accum_main>>24 ;
-    DAC_data = sin_table[phase_accum_main>>24];
-    
-    
-    //sine_index = phase_accum_main>>24 ;
-    DAC_data1 = sin_table[phase_accum_main1>>24];
-    
-    // The following section is purely for testing mult speed!
-    // Optimization set at level 1
-    // comment out one or both to see effect on ISR time!
-    // With neither: ISR total time is 123 cycles (enter, compute, exit)
-    // With float mult, ISR total time is 269  cycles 
-    // -- entry time doubles because more reg need to be saved
-    // With int mult and shift, ISR total time is 128  cycles 
-    // now the test multiply
-    // comment out to see float mult time
-    //DAC_data = (int)(DAC_data*test_isr_float);
-    //DAC_data = (int)(DAC_data*test_isr_float);
-    // comment out to see int shift/multiply time   
-    //    DAC_data = (DAC_data*test_isr_int)>>1;
-    //    DAC_data1 = (DAC_data1*test_isr_int)>>1;
-    // end test section
-    
-    // === Channel A =============
-    // CS low to start transaction
-     mPORTBClearBits(BIT_4); // start transaction
-    // test for ready
-     //while (TxBufFullSPI2());
-    // write to spi2 
-     
-     //sprintf(buffer,"%d", ( ((DAC_data +DAC_data1)>>1)+ 2048));
-    WriteSPI2( DAC_config_chan_A | ( ((DAC_data +DAC_data1)>>1)+ 2048));
+//    // main DDS phase
+//    //phase_accum_main += phase_incr_main  ;
+//    
+//    //sine_index = phase_accum_main>>24 ;
+//    DAC_data = sin_table[phase_accum_main>>24];
+//    
+//    
+//    //sine_index = phase_accum_main>>24 ;
+//    DAC_data1 = sin_table[phase_accum_main1>>24];
+//    
+//    // The following section is purely for testing mult speed!
+//    // Optimization set at level 1
+//    // comment out one or both to see effect on ISR time!
+//    // With neither: ISR total time is 123 cycles (enter, compute, exit)
+//    // With float mult, ISR total time is 269  cycles 
+//    // -- entry time doubles because more reg need to be saved
+//    // With int mult and shift, ISR total time is 128  cycles 
+//    // now the test multiply
+//    // comment out to see float mult time
+//    //DAC_data = (int)(DAC_data*test_isr_float);
+//    //DAC_data = (int)(DAC_data*test_isr_float);
+//    // comment out to see int shift/multiply time   
+//    //    DAC_data = (DAC_data*test_isr_int)>>1;
+//    //    DAC_data1 = (DAC_data1*test_isr_int)>>1;
+//    // end test section
+//    
+//    // === Channel A =============
+//    // CS low to start transaction
+//     mPORTBClearBits(BIT_4); // start transaction
+//    // test for ready
+//     //while (TxBufFullSPI2());
+//    // write to spi2 
+//     
+//     //sprintf(buffer,"%d", ( ((DAC_data +DAC_data1)>>1)+ 2048));
+//    WriteSPI2( DAC_config_chan_A | ( ((DAC_data +DAC_data1)>>1)+ 2048));
     while (SPI2STATbits.SPIBUSY); // wait for end of transaction
      // CS high
     mPORTBSetBits(BIT_4); // end transaction
@@ -259,7 +290,8 @@ static void resetTable(){
 static void addTable(){
     if (t_index<12) {
         key_table[t_index] = prior_press;
-        t_index ++;}
+        t_index ++;
+    }
 }
 
 static PT_THREAD (protothread_debounce(struct pt *pt)){
@@ -335,15 +367,22 @@ static PT_THREAD (protothread_debounce(struct pt *pt)){
                          
                      } 
                       //sets the playback value to true
-                     else if (i == 11){
-                         toggle = 1;  //sets playback to true
-                         number_index = 0;
+                     else if (i == 11 && toggle == 0){
+                        toggle = 1;  //sets playback to true
+                        number_index = 0;
+                        if (number_index<t_index){
+                            phase_accum_main1, phase_incr_main1= freq2[key_table[0]];
+                            phase_accum_main, phase_incr_main= freq1[key_table[0]];
+                        }
+                        else{
+                             phase_accum_main1, phase_incr_main1= 0;
+                             phase_accum_main, phase_incr_main= 0;
+                             
+                        }
                      }
                     
                      else if (toggle == 0 ) {
                     //adds the value to table for playback assuming playback isn't happening 
-//                     phase_accum_main1, phase_incr_main1= (int)((freq2[i]* (float)two32)/Fs ); 
-//                     phase_accum_main, phase_incr_main = (int)((freq1[i]* (float)two32)/Fs) ; 
                        phase_accum_main1, phase_incr_main1= freq2[i];
                        phase_accum_main, phase_incr_main= freq1[i];
                          
@@ -351,7 +390,6 @@ static PT_THREAD (protothread_debounce(struct pt *pt)){
                      
                      } 
 
-//                     [or start a tone, or other event]
                   }
                   else{ PushState=0;}
                   break;
