@@ -103,6 +103,12 @@ static int key_table[12];
 static float freq1[] = {1209, 1336, 1477, 1209, 1336, 1477, 1209, 1336, 1477, 1336} ;
 static float freq2[] = {697, 697, 697, 770, 770, 770, 852, 852, 852, 941} ;
 
+//TEST MODE FREQUENCY TABLE 
+
+volatile int test_button= 0;
+static float test_freq[] = {1209, 1336, 1477, 697, 770, 852, 941};
+
+
 //****************************************************/
 // print a line on the TFT
 // string buffer
@@ -114,6 +120,22 @@ void __ISR(_TIMER_2_VECTOR, ipl2) Timer2Handler(void)
     isr_enter_time = ReadTimer2() ; // - isr_time;
     
     mT2ClearIntFlag();
+    
+    //set test button
+    if (/*BUTTON IS PRESSSED*/){     
+     test_button = 1; 
+    }
+    else{
+      test_button = 2;
+    } 
+  
+     if (test_button ==1){
+     //test mode
+    }
+  
+     else{
+    //normal mode 
+    }
     
 
     if (PushState == 2 && toggle == 0){
@@ -499,6 +521,7 @@ int main(void)
   tft_fillScreen(ILI9340_BLACK);
   //240x320 vertical display
   tft_setRotation(1); // Use tft_setRotation(1) for 320x240
+  
   
   // schedule the threads
   while(1) {
