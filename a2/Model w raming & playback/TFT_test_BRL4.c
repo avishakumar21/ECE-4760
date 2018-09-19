@@ -103,6 +103,10 @@ static int key_table[12];
 static float freq1[] = {1209, 1336, 1477, 1209, 1336, 1477, 1209, 1336, 1477, 1336} ;
 static float freq2[] = {697, 697, 697, 770, 770, 770, 852, 852, 852, 941} ;
 
+static float test_freq[] = {1209, 1226, 1477, 1336, 697, 770, 852, 941};
+
+volatile int button, pressed= 0;
+
 //****************************************************/
 // print a line on the TFT
 // string buffer
@@ -114,9 +118,17 @@ void __ISR(_TIMER_2_VECTOR, ipl2) Timer2Handler(void)
     isr_enter_time = ReadTimer2() ; // - isr_time;
     
     mT2ClearIntFlag();
+    if (button !=0){
+        if (pressed == 1){
+            ramp =  127;
+            }
+        else {
+            ramp = 0;
+        }
     
-
-    if (PushState == 2 && toggle == 0 && prior_press != 10 && prior_press !=11){
+    
+    }
+    else if (PushState == 2 && toggle == 0 && prior_press != 10 && prior_press !=11){
             //normal mode
         
              counter =counter + 1;
@@ -190,6 +202,7 @@ void __ISR(_TIMER_2_VECTOR, ipl2) Timer2Handler(void)
         number_index = 0;
         ramp = 0;
         counter = 0;
+        pressed = 0;
     }
     
      phase_accum_main += phase_incr_main  ;
@@ -217,35 +230,6 @@ void __ISR(_TIMER_2_VECTOR, ipl2) Timer2Handler(void)
      
 } // end ISR TIMER2
 
-
-
-void printLine(int line_number, char* print_buffer, short text_color, short back_color){
-    // line number 0 to 31 
-    /// !!! assumes tft_setRotation(0);
-    // print_buffer is the string to print
-    int v_pos;
-    v_pos = line_number * 10 ;
-    // erase the pixels
-    tft_fillRoundRect(0, v_pos, 239, 8, 1, back_color);// x,y,w,h,radius,color
-    tft_setTextColor(text_color); 
-    tft_setCursor(0, v_pos);
-    tft_setTextSize(1);
-    tft_writeString(print_buffer);
-}
-
-void printLine2(int line_number, char* print_buffer, short text_color, short back_color){
-    // line number 0 to 31 
-    /// !!! assumes tft_setRotation(0);
-    // print_buffer is the string to print
-    int v_pos;
-    v_pos = line_number * 20 ;
-    // erase the pixels
-    tft_fillRoundRect(0, v_pos, 319, 16, 1, back_color);// x,y,w,h,radius,color
-    tft_setTextColor(text_color); 
-    tft_setCursor(0, v_pos);
-    tft_setTextSize(2);
-    tft_writeString(print_buffer);
-}
 
 // used to increment FSM and create the table
 static void addTable(){
@@ -276,13 +260,16 @@ static PT_THREAD (protothread_debounce(struct pt *pt)){
     // and turn on pull-down on inputs
     EnablePullDownB( BIT_7 | BIT_8 | BIT_9);
     
-    
+    mPORTASetPinsDigitalIn( BIT_4);    //Set port as input
+    // and turn on pull-down on inputs
+    EnablePullDownA( BIT_4);
     
      
      while(1){
          
            // yield time
         PT_YIELD_TIME_msec(30);
+        button = mPORTAReadBits(BIT_4);
         
         // read each row sequentially
         mPORTAClearBits(BIT_0 | BIT_1 | BIT_2 | BIT_3);
@@ -314,14 +301,25 @@ static PT_THREAD (protothread_debounce(struct pt *pt)){
 
                case 0: 
                   if (i != -1) {PushState=1; prior_press = i;}
-                  else {PushState=0;}
+                  else {PushState=0; pressed = 0;}
                   break;
 
                case 1:
                   if (prior_press == i) {
                      PushState=2;
                      // resets the table if they press star
-                     if (i ==10 && toggle == 0){ 
+                     if (button != 0 ){
+                         if (i<7){
+                        pressed = 1;
+                        phase_accum_main1, phase_incr_main1= test_freq[i];
+                        phase_accum_main, phase_incr_main= test_freq[i];
+                         }
+                         else {
+                         pressed = 0;
+                         }
+                     
+                     }
+                     else if (i ==10 && toggle == 0){ 
                          t_index = 0;
                          //resetTable();
                          //phase_accum_main1, phase_incr_main1= 0;
@@ -363,18 +361,24 @@ static PT_THREAD (protothread_debounce(struct pt *pt)){
                   else{ PushState=0;}
                   break;
             } // end case
-        
-         if (PushState == 2){
 
-                tft_fillRoundRect(30,100, 100, 14, 1, ILI9340_BLACK);// x,y,w,h,radius,color
-                tft_setCursor(30, 100);
+            if (PushState == 2){
+                    tft_fillRoundRect(30,100, 100, 14, 1, ILI9340_BLACK);// x,y,w,h,radius,color
+                    tft_setCursor(30, 100);
+                    tft_setTextColor(ILI9340_YELLOW); tft_setTextSize(2);
+                     sprintf(buffer,"%d", i);
+                     if (i==10)sprintf(buffer,"*");
+                     if (i==11)sprintf(buffer,"#");
+                    tft_writeString(buffer);
+
+            }
+        
+            tft_fillRoundRect(50,200, 100, 14, 1, ILI9340_BLACK);// x,y,w,h,radius,color
+                tft_setCursor(50, 200);
                 tft_setTextColor(ILI9340_YELLOW); tft_setTextSize(2);
-                 sprintf(buffer,"%d", i);
-                 if (i==10)sprintf(buffer,"*");
-                 if (i==11)sprintf(buffer,"#");
+                 sprintf(buffer,"%d", button);
+       
                 tft_writeString(buffer);
-             
-             }
         
                  
  
@@ -442,6 +446,12 @@ int main(void)
        // this computes and stores the frequency table look up for future use
             freq2[i] = (int)((freq2[i]* (float)two32)/Fs ); 
             freq1[i] = (int)((freq1[i]* (float)two32)/Fs );
+   
+   }
+    for (i=0 ; i<7; i++){
+       // this computes and stores the frequency table look up for future use
+            test_freq[i] = (int)((test_freq[i]* (float)two32)/Fs ); 
+            
    
    }
   
