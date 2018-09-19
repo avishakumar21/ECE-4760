@@ -117,10 +117,31 @@ void __ISR(_TIMER_2_VECTOR, ipl2) Timer2Handler(void)
     
 
     if (PushState == 2 && toggle == 0 && prior_press != 10 && prior_press !=11){
-        ramp = 127;
+            //normal mode
+        
+             counter =counter + 1;
+             if (counter<127){
+                 // ramp up for >5 ms
+                 ramp = (1+ramp);
+             }
+             else if (counter < 1613){
+                 //keep at full amp for >65 ms
+                 ramp = 127;
+             
+             }
+             else if (counter < 1740){
+                 //ramp down for >5 ms
+                  ramp = (ramp - 1);
+             }
+             else {
+                 // keep at 0 for >65 ms
+                 ramp = 0;
+             
+             }
         
     }
-    else if (toggle ==1 && number_index <t_index){
+    else if (toggle == 1 && number_index <t_index){
+        //playback mode
         counter =counter + 1;
         // 5 msec time is  = 262144  which is 2^18
 
@@ -164,11 +185,11 @@ void __ISR(_TIMER_2_VECTOR, ipl2) Timer2Handler(void)
          }
     }
     else {
-        // might be the case where playback finished 
-        //and no sound is coming out
+        // might be the case where playback finished and no sound is coming out
         toggle = 0;
         number_index = 0;
         ramp = 0;
+        counter = 0;
     }
     
      phase_accum_main += phase_incr_main  ;
