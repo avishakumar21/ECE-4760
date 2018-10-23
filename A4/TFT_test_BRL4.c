@@ -63,6 +63,16 @@ static int value;
 int generate_period = 2000 ;
 int pwm_on_time = 500 ;
 
+//PID control stuff
+volatile int errorArray [5] = {0, 0, 0, 0, 0}; 
+volatile int pidCounter = 0;
+volatile int error; 
+volatile int pterm;
+volatile int iterm;
+volatile int dterm;
+volatile int errorSum = 0;
+
+
 
 // system 1 second interval tick
 int sys_time_seconds ;
@@ -82,6 +92,50 @@ void __ISR(_TIMER_2_VECTOR, ipl2) Timer2Handler(void)
      
      
      //SetDCOC3PWM(pwm_on_time);
+     
+     //PID stuff
+     pidCounter = pidCounter + 1; 
+     pidCounter = pidCounter%4;
+     
+     
+     
+    error = errorArray[pidCounter] - 0; //actual-desired?? what is desired?
+    
+    if(error = 0){
+        errorSum = 0;
+    }
+    else{
+        errorSum = errorSum + error;
+
+    }
+     
+    pterm = P_gain * error;
+     
+    iterm = I_gain * errorSum; 
+    
+    int newNum;
+    if (pidCounter == 4){
+        newNum = 0;
+    }
+    else if (pidCounter == 3){
+        newNum = 4;
+    }
+    else if (pidCounter == 2){
+        newNum = 3;
+    }
+    else if (pidCounter == 1){
+        newNum = 2;
+    }
+    else{
+        newNum = 1;
+    }
+    
+    dterm = D_gain * error - errorArray[newNum];  
+     
+     
+     
+    
+     
      
     // CS low to start transaction
      mPORTBClearBits(BIT_4); // start transaction - does it matter?
