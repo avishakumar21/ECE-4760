@@ -48,14 +48,14 @@
 //== Timer 2 interrupt handler ===========================================
 volatile unsigned int DAC_dataA ;// output value
 volatile unsigned int DAC_dataB ;// output value
-volatile unsigned int adc1; //SHOULD THIS BE AN INT? //actual beam angle 
-volatile unsigned int adc5; //motor control signal
+static  int adc1; //actual beam angle
+static  int adc5; //motor control signal
 
 
 volatile SpiChannel spiChn = SPI_CHANNEL2 ;	// the SPI channel to use
 volatile int spiClkDiv = 2 ; // 20 MHz max speed for this DAC
 
-
+volatile int P_gain = 200, D_gain = 10000, I_gain = 3;
 static char cmd[16]; 
 static int value;
 
@@ -66,56 +66,42 @@ int pwm_on_time = 500 ;
 
 // system 1 second interval tick
 int sys_time_seconds ;
-
 void __ISR(_TIMER_2_VECTOR, ipl2) Timer2Handler(void)
 {
-    //Runs the PID control loop at 1000/sec using the angle measurements from the potentiometer 
     mT2ClearIntFlag();
     
     // TO READ the two channels
     adc1 = ReadADC10(0); //actual beam angle 
     adc5 = ReadADC10(1); //motor control signal
     
-    
-        //command PWM example 
-
-    if (cmd[0]=='p' ) {
-        generate_period = value;
-        // update the timer period
-        WritePeriod2(generate_period);
-        // update the pulse start/stop
-        SetPulseOC2(generate_period>>2, generate_period>>1);
-    }
-
-    if (cmd[0]=='d' ) {
-        pwm_on_time = value ;
-        SetDCOC3PWM(pwm_on_time);
-    } //  
-
-    if (cmd[0]=='t' ) {
-        sprintf(PT_send_buffer,"%d ", sys_time_seconds);
-     
-    
-    //set hardware PWM signal using output-compare unit to control the motor
-    SetDCOC3PWM(pwm_on_time); 
-    
     // generate  ramp
     // at 100 ksample/sec, 2^12 samples (4096) on one ramp up
     // yields 100000/4096 = 24.4 Hz.
      DAC_dataA = adc1 << 2  ; // for testing (actual beam angle) 
      DAC_dataB = adc5 >> 4; //for testing (motor control signal) 
-    
+     
+     
+     //SetDCOC3PWM(pwm_on_time);
+     
     // CS low to start transaction
-     mPORTBClearBits(BIT_4); // start transaction USE BIT 4???
+     mPORTBClearBits(BIT_4); // start transaction - does it matter?
     // test for ready
      while (TxBufFullSPI2());
      // write to spi2
-    WriteSPI2(DAC_config_chan_A | DAC_dataA);
-    WriteSPI2(DAC_config_chan_B | DAC_dataB);
- 
-    
+     WriteSPI2(DAC_config_chan_A | DAC_dataA);
     // test for done
-    while (SPI2STATbits.SPIBUSY) ; // wait for end of transaction
+    while (SPI2STATbits.SPIBUSY); // wait for end of transaction
+     // CS high
+     mPORTBSetBits(BIT_4); // end transaction
+     
+     // CS low to start transaction
+     mPORTBClearBits(BIT_4); // start transaction
+    // test for ready
+     while (TxBufFullSPI2());
+     // write to spi2
+     WriteSPI2(DAC_config_chan_B | DAC_dataB);
+    // test for done
+    while (SPI2STATbits.SPIBUSY); // wait for end of transaction
      // CS high
      mPORTBSetBits(BIT_4); // end transaction
 }
@@ -126,62 +112,89 @@ void __ISR(_TIMER_2_VECTOR, ipl2) Timer2Handler(void)
 // note that UART input and output are threads
 static struct pt pt_timer ;
 
+// system 1 second interval tick
+int counter=0 ;
 
+static int state, poten, button1, button2;
 
+char buffer [60];
 
 // === Timer Thread =================================================
 // update a 1 second tick counter
 static PT_THREAD (protothread_timer(struct pt *pt))
 {
-    
-    //Thread 1 takes user input to set up PID parameters and the desired angle.
-    //Updates the LCD at around 10 times per second.
-    
     PT_BEGIN(pt);
-    
-    // update a 1 second tick counter 
-    
+//     tft_setCursor(0, 0);
+//     tft_setTextColor(ILI9340_WHITE);  tft_setTextSize(1);
+//     tft_writeString("Time in seconds since boot\n");
+//     // set up LED to blink
+//     mPORTASetBits(BIT_0 );	//Clear bits to ensure light is off.
+//     mPORTASetPinsDigitalOut(BIT_0 );    //Set port as output
     while(1) {
-          // yield time 1 second
-          PT_YIELD_TIME_msec(1000) ;
-          sys_time_seconds++ ;
-          // NEVER exit while
-    } // END WHILE(1)
-    
 
-    //read button press 
-    unsigned int button1 = mPORTAReadBits(BIT_3); 
-    unsigned int button2 = mPORTAReadBits(BIT_4);
+        if (counter == 0){
+            //updates the gains value on the screen every 1 second
+            tft_fillRoundRect(0,10, 50, 14, 1, ILI9340_BLACK);// x,y,w,h,radius,color
+            tft_setCursor(0, 10);
+            tft_setTextColor(ILI9340_YELLOW); tft_setTextSize(2);
+            sprintf(buffer,"P : %d", P_gain);
+            tft_writeString(buffer);
+           
+            
+            tft_fillRoundRect(0,30, 50, 14, 1, ILI9340_BLACK);// x,y,w,h,radius,color
+            tft_setCursor(0, 30);
+            tft_setTextColor(ILI9340_YELLOW); tft_setTextSize(2);
+            sprintf(buffer,"D : %d", D_gain);
+            tft_writeString(buffer);
+           
+            
+            tft_fillRoundRect(0,50, 50, 14, 1, ILI9340_BLACK);// x,y,w,h,radius,color
+            tft_setCursor(0, 50);
+            tft_setTextColor(ILI9340_YELLOW); tft_setTextSize(2);
+            sprintf(buffer,"I : %d", I_gain);
+            tft_writeString(buffer);
+        }
+        
+//        adc1 = ReadADC10(0);
+//        
+//            tft_fillRoundRect(0,80, 100, 14, 1, ILI9340_BLACK);// x,y,w,h,radius,color
+//            tft_setCursor(0, 80);
+//            tft_setTextColor(ILI9340_YELLOW); tft_setTextSize(2);
+//            sprintf(buffer,"I : %d", adc1);
+//            tft_writeString(buffer);
+        
+         //read button press 
+         button1 = mPORTAReadBits(BIT_3); 
+         button2 = mPORTAReadBits(BIT_4);
     
-    //read potentiometer value 
-    unsigned int poten = ReadADC10(2);
-    //scale potentiometer value 
-    poten = poten/4; //i just made this up
     
-    if (button1 == !0){
-     //Button 1 puts a selection cyclically onto one of the 4 parameters displayed on the LCD display.
-     //Pressing button 1 also freezes the parameter values used in computation.
-     //set desired beam angle 
-     //set PID proportional gain.
-     //set the PID differential gain.
-     //set the PID integral gain.
-
-        int i = 0;
+    if (button1 != 0 ){
+        state = (state + 1) % 3;
+    
     }
-    else if (button2 == !0){
-    //Button 2 loads the new parameters for use in computation.
-        int j = 0;
-    }
-    else { //neither pressed 
-        int k = 0;
-    }
-
-
+    else if (button2 !=0){
+         poten = ReadADC10(2); // reading in the user input
+         if (state == 0){
+         //we're setting the P - gains term
+             P_gain = poten>>2; // sets P the range from 0 to 255
+         }
+         else if (state == 1){
+         //we're setting I - gains term 
+             I_gain = poten>>8; //sets it to range from 0 to 4 to be used for shifting 
+         }
+         else {
+         //we're setting D - gains term
+             D_gain = poten*10; //sets P to the range 0 to 10,230 by increments of 10
+         }
     
-  PT_YIELD_TIME_msec(50) ;
+    }
+         counter = (counter +1) % 30;
+
+        PT_YIELD_TIME_msec(32);
+        // NEVER exit while
+      } // END WHILE(1)
   PT_END(pt);
 } // timer thread
-
 
 void set_up_ADC(void){
    // configure and enable the ADC
@@ -214,7 +227,7 @@ void set_up_ADC(void){
     #define PARAM5 SKIP_SCAN_ALL //|SKIP_SCAN_AN5 //SKIP_SCAN_AN1 |SKIP_SCAN_AN5  //SKIP_SCAN_ALL
 
     // // configure to sample AN5 and AN1 on MUX A and B
-    SetChanADC10( ADC_CH0_NEG_SAMPLEA_NVREF | ADC_CH0_POS_SAMPLEA_AN1 | ADC_CH0_NEG_SAMPLEB_NVREF | ADC_CH0_POS_SAMPLEB_AN5 |ADC_CH0_NEG_SAMPLEB_NVREF | ADC_CH0_POS_SAMPLEB_AN11 );
+    SetChanADC10( ADC_CH0_NEG_SAMPLEA_NVREF | ADC_CH0_POS_SAMPLEA_AN1 | ADC_CH0_NEG_SAMPLEB_NVREF | ADC_CH0_POS_SAMPLEB_AN5 );
 
     OpenADC10( PARAM1, PARAM2, PARAM3, PARAM4, PARAM5 ); // configure ADC using the parameters defined above
 
@@ -234,7 +247,7 @@ void main(void) {
   ANSELA = 0; ANSELB = 0; 
 
  // === Config timer and output compare to make PWM ======== 
-    // set up timer2 to generate the wave period !
+    // set up timer2 to generate the wave period every  1 mSec!
     OpenTimer2(T2_ON | T2_SOURCE_INT | T2_PS_1_1, 40000);
     // Need ISR to compute PID controller 
     ConfigIntTimer2(T2_INT_ON | T2_INT_PRIOR_2); 
@@ -245,11 +258,7 @@ void main(void) {
     // OC3 is PPS group 4, map to RPB9 (pin 18) 
     PPSOutput(4, RPB9, OC3);
     
-    
-    // set pulse to go high at 1/4 of the timer period and drop again at 1/2 the timer period
-    OpenOC2(OC_ON | OC_TIMER2_SRC | OC_CONTINUE_PULSE, 40000>>1, 40000>>2);
-    // OC2 is PPS group 2, map to RPB5 (pin 14)
-    PPSOutput(2, RPB5, OC2)
+ 
     
     // control CS for DAC
     mPORTBSetPinsDigitalOut(BIT_4);
@@ -259,14 +268,13 @@ void main(void) {
     // 16 bit transfer CKP=1 CKE=1
     // possibles SPI_OPEN_CKP_HIGH;   SPI_OPEN_SMP_END;  SPI_OPEN_CKE_REV
     // For any given peripherial, you will need to match these
-    // clock divider set to 2 for 20 MHz
-    
+    // clk divider set to 2 for 20 MHz
     SpiChnOpen(SPI_CHANNEL2, SPI_OPEN_ON | SPI_OPEN_MODE16 | SPI_OPEN_MSTEN | SPI_OPEN_CKE_REV , 2);
-    // end DAC setup
+  // end DAC setup
     
-    // === config threads ==========
-    // turns OFF UART support and debugger pin, unless defines are set
-    PT_setup();
+  // === config threads ==========
+  // turns OFF UART support and debugger pin, unless defines are set
+  PT_setup();
   
     //Two ADC channels (one for angle sensor, one for parameter setting)
     //Perhaps use A5 and A1.
@@ -276,28 +284,29 @@ void main(void) {
     mPORTASetPinsDigitalIn(BIT_3|BIT_4);
     EnablePullDownA( BIT_3 | BIT_4);
     //mPORTAReadBits(BIT_3) or mPORTAReadBits(BIT_4)
+
     
-    // === setup system wide interrupts  ========
-    INTEnableSystemMultiVectoredInt();
 
+  // === setup system wide interrupts  ========
+  INTEnableSystemMultiVectoredInt();
+
+  // init the threads
+  PT_INIT(&pt_timer);
   
-    // init the threads
-    PT_INIT(&pt_timer);
+  // init the display
+  tft_init_hw();
+  tft_begin();
+  tft_fillScreen(ILI9340_BLACK);
+  //240x320 vertical display
+  tft_setRotation(0); // Use tft_setRotation(1) for 320x240
 
-    // init the display
-    tft_init_hw();
-    tft_begin();
-    tft_fillScreen(ILI9340_BLACK);
-    //240x320 vertical display
-    tft_setRotation(0); // Use tft_setRotation(1) for 320x240
-
-    // seed random color
-    srand(1);
-
-    // round-robin scheduler for threads
-    while (1){
-        PT_SCHEDULE(protothread_timer(&pt_timer));
-    }
+  // seed random color
+  srand(1);
+  
+  // round-robin scheduler for threads
+  while (1){
+      PT_SCHEDULE(protothread_timer(&pt_timer));
+      }
   } // main
 
 // === end  ======================================================
