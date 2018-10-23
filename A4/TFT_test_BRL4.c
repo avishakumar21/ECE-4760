@@ -170,7 +170,7 @@ void main(void) {
     mT2ClearIntFlag(); // and clear the interrupt flag 
     
     // set up compare3 for PWM mode 
-    OpenOC3(OC_ON | OC_TIMER2_SRC | OC_PWM_FAULT_PIN_DISABLE , pwm_on_time, pwm_on_time); // 
+    OpenOC3(OC_ON | OC_TIMER2_SRC | OC_PWM_FAULT_PIN_DISABLE , 0, 40000); // 
     // OC3 is PPS group 4, map to RPB9 (pin 18) 
     PPSOutput(4, RPB9, OC3);
     
