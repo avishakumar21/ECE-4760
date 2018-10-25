@@ -55,63 +55,66 @@ static  int adc5; //motor control signal
 volatile SpiChannel spiChn = SPI_CHANNEL2 ;	// the SPI channel to use
 volatile int spiClkDiv = 2 ; // 20 MHz max speed for this DAC
 
-volatile int P_gain = 200, D_gain = 10000, I_gain = 3;
-static char cmd[16]; 
-static int value;
-
-//from example 
-int generate_period = 2000 ;
-int pwm_on_time = 500 ;
+volatile int P_gain = 0, D_gain = 0, I_gain = 0; //200, 10000, 3
 
 //PID control stuff
 volatile int errorArray [5] = {0, 0, 0, 0, 0}; 
 volatile int pidCounter = 0;
-volatile int error; 
+volatile int error = 0; 
 volatile int pterm;
 volatile int iterm;
 volatile int dterm;
 volatile int errorSum = 0;
+volatile int pid; 
+
+//to obtain desired angle
+//read the potentiometer value between 0 and 1023 at 0 30 and -30
+static int desired_angle_30 = 545;
+static int desired_angle_0 = 508;
+static int desired_angle_neg30 = 444;
+static int desired_hanging = 243; 
+volatile int desired_angle; 
 
 
+volatile int pwm_on_time = 1000; //need to tune this  
 
+volatile int motor_disp = 0; 
+      
 // system 1 second interval tick
 int sys_time_seconds ;
 void __ISR(_TIMER_2_VECTOR, ipl2) Timer2Handler(void)
 {
     mT2ClearIntFlag();
     
-    // TO READ the two channels
-    adc1 = ReadADC10(0); //actual beam angle 
-    adc5 = ReadADC10(1); //motor control signal
+                       
+    //PID stuff
+    pidCounter = pidCounter%4;
+    //account for off by 1
     
-    // generate  ramp
-    // at 100 ksample/sec, 2^12 samples (4096) on one ramp up
-    // yields 100000/4096 = 24.4 Hz.
-     DAC_dataA = adc1 << 2  ; // for testing (actual beam angle) 
-     DAC_dataB = adc5 >> 4; //for testing (motor control signal) 
-     
-     
-     //SetDCOC3PWM(pwm_on_time);
-     
-     //PID stuff
-     pidCounter = pidCounter + 1; 
-     pidCounter = pidCounter%4;
-     
-     
-     
-    error = errorArray[pidCounter] - 0; //actual-desired?? what is desired?
+    if (pidCounter = 0){
+        errorArray[4] = error;
+    }
+    else {
+        errorArray[pidCounter - 1] = error; 
+    }
     
-    if(error = 0){
+    pidCounter = pidCounter + 1; 
+
+    
+    error = errorArray[pidCounter] - desired_angle_0; 
+    
+    if(error == 0){
         errorSum = 0;
+        iterm = iterm*0.9; // multiply by 0.9 so that iterm does not entirely drop to 0
+
     }
     else{
         errorSum = errorSum + error;
-
+        iterm = iterm*errorSum; 
     }
      
     pterm = P_gain * error;
      
-    iterm = I_gain * errorSum; 
     
     int newNum;
     if (pidCounter == 4){
@@ -130,12 +133,42 @@ void __ISR(_TIMER_2_VECTOR, ipl2) Timer2Handler(void)
         newNum = 1;
     }
     
-    dterm = D_gain * error - errorArray[newNum];  
+    dterm = D_gain * (error - errorArray[newNum]);  
      
      
-     
+    volatile int pid = pterm + dterm+ iterm; //MULTIPLY ITERM BY 1/16???
     
-     
+    //convert from 0-40000 (pid) to 0-1023 (adc units)
+    //should already be converted from gain terms in thread 
+
+    
+    if (pid < 0){
+        pid = 0;
+    }
+    if (pid > 1023){
+        pid = 1023; 
+    }
+   
+    //write to potentiometer that drives the angle
+    pwm_on_time = pid*0.75; //tuning 
+    
+    //drive the motor 
+    SetDCOC3PWM(pwm_on_time);
+    
+    
+    //digital low pass filter for motor
+    motor_disp = motor_disp + ((pwm_on_time - motor_disp)>>4); 
+    
+    // TO READ the two channels
+    adc1 = ReadADC10(0); //actual beam angle 
+    adc5 = ReadADC10(1); //motor control signal
+    
+    // generate  ramp
+    // at 100 ksample/sec, 2^12 samples (4096) on one ramp up
+    // yields 100000/4096 = 24.4 Hz.
+     DAC_dataA = adc1 << 2  ; // (actual beam angle) 
+     DAC_dataB = adc5 >> 4; //(motor control signal) 
+
      
     // CS low to start transaction
      mPORTBClearBits(BIT_4); // start transaction - does it matter?
@@ -153,7 +186,7 @@ void __ISR(_TIMER_2_VECTOR, ipl2) Timer2Handler(void)
     // test for ready
      while (TxBufFullSPI2());
      // write to spi2
-     WriteSPI2(DAC_config_chan_B | DAC_dataB);
+     WriteSPI2(DAC_config_chan_B | DAC_dataB); //write to channel B?
     // test for done
     while (SPI2STATbits.SPIBUSY); // wait for end of transaction
      // CS high
@@ -209,7 +242,6 @@ static PT_THREAD (protothread_timer(struct pt *pt))
             tft_writeString(buffer);
         }
         
-//        adc1 = ReadADC10(0);
 //        
 //            tft_fillRoundRect(0,80, 100, 14, 1, ILI9340_BLACK);// x,y,w,h,radius,color
 //            tft_setCursor(0, 80);
@@ -217,9 +249,9 @@ static PT_THREAD (protothread_timer(struct pt *pt))
 //            sprintf(buffer,"I : %d", adc1);
 //            tft_writeString(buffer);
         
-         //read button press 
-         button1 = mPORTAReadBits(BIT_3); 
-         button2 = mPORTAReadBits(BIT_4);
+    //read button press 
+    button1 = mPORTAReadBits(BIT_3); 
+    button2 = mPORTAReadBits(BIT_4);
     
     
     if (button1 != 0 ){
@@ -238,11 +270,36 @@ static PT_THREAD (protothread_timer(struct pt *pt))
          }
          else {
          //we're setting D - gains term
-             D_gain = poten*10; //sets P to the range 0 to 10,230 by increments of 10
+             D_gain = poten*10; //sets D to the range 0 to 1023 by increments of 10
          }
     
     }
-         counter = (counter +1) % 30;
+                     
+    counter = (counter +1) % 30;
+    
+    //USE THIS FOR DEMO
+//         
+//         if (counter == 0 && button1 != 0){
+//        desired_angle = desired_hanging;    
+//    }
+//    else if (counter == 0 && button1 == 0 ){
+//        desired_angle = desired_angle_0;
+//    }
+//    else if (counter == 5){
+//        desired_angle = desired_angle_30;
+//    } 
+//    else if (counter == 10){
+//        desired_angle = desired_angle_neg30;
+//    }
+//    else if (counter == 15){
+//        desired_angle = desired_angle_0;
+//    }
+//    else{
+//        desired_angle = desired_angle; 
+//    }
+         
+         
+                 
 
         PT_YIELD_TIME_msec(32);
         // NEVER exit while
@@ -290,7 +347,6 @@ void set_up_ADC(void){
     // TO READ the two channels
     // adc1 = ReadADC10(0);
     // adc5 = ReadADC10(1); 
-    // adc11 = ReadADC10(2);
     ///////////////////////////////////////////////////////
 
 }
@@ -302,13 +358,13 @@ void main(void) {
 
  // === Config timer and output compare to make PWM ======== 
     // set up timer2 to generate the wave period every  1 mSec!
-    OpenTimer2(T2_ON | T2_SOURCE_INT | T2_PS_1_1, 40000);
+    OpenTimer2(T2_ON | T2_SOURCE_INT | T2_PS_1_1, 40000); //generate period
     // Need ISR to compute PID controller 
     ConfigIntTimer2(T2_INT_ON | T2_INT_PRIOR_2); 
     mT2ClearIntFlag(); // and clear the interrupt flag 
     
     // set up compare3 for PWM mode 
-    OpenOC3(OC_ON | OC_TIMER2_SRC | OC_PWM_FAULT_PIN_DISABLE , 0, 40000); // 
+    OpenOC3(OC_ON | OC_TIMER2_SRC | OC_PWM_FAULT_PIN_DISABLE , pwm_on_time, pwm_on_time); //pwm_on_time????
     // OC3 is PPS group 4, map to RPB9 (pin 18) 
     PPSOutput(4, RPB9, OC3);
     
@@ -328,7 +384,7 @@ void main(void) {
     
   // === config threads ==========
   // turns OFF UART support and debugger pin, unless defines are set
-  PT_setup();
+    PT_setup();
   
     //Two ADC channels (one for angle sensor, one for parameter setting)
     //Perhaps use A5 and A1.
@@ -364,4 +420,3 @@ void main(void) {
   } // main
 
 // === end  ======================================================
-
