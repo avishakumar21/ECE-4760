@@ -55,7 +55,7 @@ static  int adc5; //motor control signal
 volatile SpiChannel spiChn = SPI_CHANNEL2 ;	// the SPI channel to use
 volatile int spiClkDiv = 2 ; // 20 MHz max speed for this DAC
 
-volatile int P_gain = 0, D_gain = 0, I_gain = 0; //200, 10000, 3
+volatile int P_gain = 200, D_gain = 0, I_gain = 0; //200, 10000, 3
 
 //PID control stuff
 volatile int errorArray [5] = {0, 0, 0, 0, 0}; 
@@ -82,15 +82,31 @@ volatile int motor_disp = 0;
       
 // system 1 second interval tick
 int sys_time_seconds ;
+
 void __ISR(_TIMER_2_VECTOR, ipl2) Timer2Handler(void)
 {
     mT2ClearIntFlag();
     
+    //NEED TO UPDATE ERROR!
+    
+        // TO READ the two channels
+    adc1 = ReadADC10(0); //actual beam angle 
+    adc5 = ReadADC10(1); //motor control signal
+    
+    // generate  ramp
+    // at 100 ksample/sec, 2^12 samples (4096) on one ramp up
+    // yields 100000/4096 = 24.4 Hz.
+     DAC_dataA = adc1 << 2  ; // (actual beam angle) 
+     DAC_dataB = adc5 >> 4; //(motor control signal) 
+     
                        
     //PID stuff
-    pidCounter = pidCounter%4;
-    //account for off by 1
+    pidCounter = pidCounter&3; //%4 optimization
     
+    error = adc1 - desired_angle_0; //actual- desired //SHOULD WE USE DAC A??
+
+    
+    //account for off by 1
     if (pidCounter = 0){
         errorArray[4] = error;
     }
@@ -98,10 +114,7 @@ void __ISR(_TIMER_2_VECTOR, ipl2) Timer2Handler(void)
         errorArray[pidCounter - 1] = error; 
     }
     
-    pidCounter = pidCounter + 1; 
-
-    
-    error = errorArray[pidCounter] - desired_angle_0; 
+    pidCounter = pidCounter + 1;   
     
     if(error == 0){
         errorSum = 0;
@@ -138,19 +151,17 @@ void __ISR(_TIMER_2_VECTOR, ipl2) Timer2Handler(void)
      
     volatile int pid = pterm + dterm+ iterm; //MULTIPLY ITERM BY 1/16???
     
-    //convert from 0-40000 (pid) to 0-1023 (adc units)
-    //should already be converted from gain terms in thread 
 
-    
+    //pid to 40000 
     if (pid < 0){
         pid = 0;
     }
-    if (pid > 1023){
-        pid = 1023; 
+    if (pid > 40000){
+        pid = 40000; 
     }
    
     //write to potentiometer that drives the angle
-    pwm_on_time = pid*0.75; //tuning 
+    pwm_on_time = pid; //tuning 
     
     //drive the motor 
     SetDCOC3PWM(pwm_on_time);
@@ -159,21 +170,13 @@ void __ISR(_TIMER_2_VECTOR, ipl2) Timer2Handler(void)
     //digital low pass filter for motor
     motor_disp = motor_disp + ((pwm_on_time - motor_disp)>>4); 
     
-    // TO READ the two channels
-    adc1 = ReadADC10(0); //actual beam angle 
-    adc5 = ReadADC10(1); //motor control signal
-    
-    // generate  ramp
-    // at 100 ksample/sec, 2^12 samples (4096) on one ramp up
-    // yields 100000/4096 = 24.4 Hz.
-     DAC_dataA = adc1 << 2  ; // (actual beam angle) 
-     DAC_dataB = adc5 >> 4; //(motor control signal) 
+
 
      
     // CS low to start transaction
      mPORTBClearBits(BIT_4); // start transaction - does it matter?
     // test for ready
-     while (TxBufFullSPI2());
+    while (TxBufFullSPI2());
      // write to spi2
      WriteSPI2(DAC_config_chan_A | DAC_dataA);
     // test for done
@@ -242,12 +245,15 @@ static PT_THREAD (protothread_timer(struct pt *pt))
             tft_writeString(buffer);
         }
         
-//        
+        
 //            tft_fillRoundRect(0,80, 100, 14, 1, ILI9340_BLACK);// x,y,w,h,radius,color
 //            tft_setCursor(0, 80);
 //            tft_setTextColor(ILI9340_YELLOW); tft_setTextSize(2);
 //            sprintf(buffer,"I : %d", adc1);
 //            tft_writeString(buffer);
+        
+        
+  
         
     //read button press 
     button1 = mPORTAReadBits(BIT_3); 
@@ -299,8 +305,18 @@ static PT_THREAD (protothread_timer(struct pt *pt))
 //    }
          
          
-                 
+        tft_fillRoundRect(0,80, 50, 14, 1, ILI9340_BLACK);// x,y,w,h,radius,color
+        tft_setCursor(0, 80);
+        tft_setTextColor(ILI9340_YELLOW); tft_setTextSize(2);
+        sprintf(buffer,"PWM : %d", pwm_on_time);
+        tft_writeString(buffer);         
 
+        tft_fillRoundRect(0,100, 50, 14, 1, ILI9340_BLACK);// x,y,w,h,radius,color
+        tft_setCursor(0, 100);
+        tft_setTextColor(ILI9340_YELLOW); tft_setTextSize(2);
+        sprintf(buffer,"error : %d", error);
+        tft_writeString(buffer); 
+        
         PT_YIELD_TIME_msec(32);
         // NEVER exit while
       } // END WHILE(1)
