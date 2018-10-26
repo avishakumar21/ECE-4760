@@ -55,7 +55,7 @@ static  int adc5; //motor control signal
 volatile SpiChannel spiChn = SPI_CHANNEL2 ;	// the SPI channel to use
 volatile int spiClkDiv = 2 ; // 20 MHz max speed for this DAC
 
-volatile int P_gain = 200, D_gain = 0, I_gain = 0; //200, 10000, 3
+volatile int P_gain = 1400, D_gain = 17000, I_gain = 4 ;//200, 10000, 3
 
 //PID control stuff
 volatile int errorArray [5] = {0, 0, 0, 0, 0}; 
@@ -64,21 +64,24 @@ volatile int error = 0;
 volatile int pterm;
 volatile int iterm;
 volatile int dterm;
-volatile int errorSum = 0;
+static int errorSum = 0;
 volatile int pid; 
 
 //to obtain desired angle
 //read the potentiometer value between 0 and 1023 at 0 30 and -30
-static int desired_angle_30 = 545;
-static int desired_angle_0 = 508;
-static int desired_angle_neg30 = 444;
+static int desired_angle_30 = 598;
+static int desired_angle_0 = 515;
+static int desired_angle_neg30 = 418;
 static int desired_hanging = 243; 
-volatile int desired_angle; 
+volatile int desired_angle= 508; 
 
+static int last_iterm =0;
 
-volatile int pwm_on_time = 1000; //need to tune this  
+volatile int pwm_on_time = 40000; //need to tune this  
 
 volatile int motor_disp = 0; 
+
+static int time =0;
       
 // system 1 second interval tick
 int sys_time_seconds ;
@@ -91,65 +94,55 @@ void __ISR(_TIMER_2_VECTOR, ipl2) Timer2Handler(void)
     
         // TO READ the two channels
     adc1 = ReadADC10(0); //actual beam angle 
-    adc5 = ReadADC10(1); //motor control signal
     
-    // generate  ramp
-    // at 100 ksample/sec, 2^12 samples (4096) on one ramp up
-    // yields 100000/4096 = 24.4 Hz.
-     DAC_dataA = adc1 << 2  ; // (actual beam angle) 
-     DAC_dataB = adc5 >> 4; //(motor control signal) 
-     
-                       
-    //PID stuff
-    pidCounter = pidCounter&3; //%4 optimization
     
-    error = adc1 - desired_angle_0; //actual- desired //SHOULD WE USE DAC A??
+    if (time == 6) {
+        errorSum = 0;
+        desired_angle= desired_angle_30;
+    
+    }
+    else if (time == 12){
+        errorSum = 0;
+        desired_angle = desired_angle_neg30;
+    
+    }
+    else if (time == 18) {
+        errorSum = 0;
+        desired_angle = desired_angle_0;
+    
+    }
+   
+ 
+    error = desired_angle - adc1; //actual- desired //SHOULD WE USE DAC A??
+     pterm = P_gain * error;
 
     
-    //account for off by 1
-    if (pidCounter = 0){
-        errorArray[4] = error;
-    }
-    else {
-        errorArray[pidCounter - 1] = error; 
-    }
+
     
-    pidCounter = pidCounter + 1;   
+    dterm = D_gain * (error - errorArray[pidCounter]);  
+    
+    errorArray[pidCounter]= error;
+    
+    pidCounter = (pidCounter+ 1)%5; 
+
+    
+    
     
     if(error == 0){
         errorSum = 0;
-        iterm = iterm*0.9; // multiply by 0.9 so that iterm does not entirely drop to 0
+        iterm = 0.95*last_iterm; // multiply by 0.9 so that iterm does not entirely drop to 0
 
     }
     else{
-        errorSum = errorSum + error;
-        iterm = iterm*errorSum; 
+        errorSum = errorSum + (error>>I_gain);
+        iterm = errorSum; 
+        last_iterm = iterm;
     }
      
-    pterm = P_gain * error;
-     
-    
-    int newNum;
-    if (pidCounter == 4){
-        newNum = 0;
-    }
-    else if (pidCounter == 3){
-        newNum = 4;
-    }
-    else if (pidCounter == 2){
-        newNum = 3;
-    }
-    else if (pidCounter == 1){
-        newNum = 2;
-    }
-    else{
-        newNum = 1;
-    }
-    
-    dterm = D_gain * (error - errorArray[newNum]);  
+       
      
      
-    volatile int pid = pterm + dterm+ iterm; //MULTIPLY ITERM BY 1/16???
+    int pid = pterm + dterm+ iterm; //MULTIPLY ITERM BY 1/16???
     
 
     //pid to 40000 
@@ -172,11 +165,11 @@ void __ISR(_TIMER_2_VECTOR, ipl2) Timer2Handler(void)
     
 
 
+    DAC_dataA = adc1 << 2  ; // for testing (actual beam angle) 
+    DAC_dataB = motor_disp>>4; //for testing (motor control signal) 
      
     // CS low to start transaction
      mPORTBClearBits(BIT_4); // start transaction - does it matter?
-    // test for ready
-    while (TxBufFullSPI2());
      // write to spi2
      WriteSPI2(DAC_config_chan_A | DAC_dataA);
     // test for done
@@ -186,8 +179,6 @@ void __ISR(_TIMER_2_VECTOR, ipl2) Timer2Handler(void)
      
      // CS low to start transaction
      mPORTBClearBits(BIT_4); // start transaction
-    // test for ready
-     while (TxBufFullSPI2());
      // write to spi2
      WriteSPI2(DAC_config_chan_B | DAC_dataB); //write to channel B?
     // test for done
@@ -205,7 +196,7 @@ static struct pt pt_timer ;
 // system 1 second interval tick
 int counter=0 ;
 
-static int state, poten, button1, button2;
+static int state=0, poten=0, button1=0, button2=0;
 
 char buffer [60];
 
@@ -223,99 +214,89 @@ static PT_THREAD (protothread_timer(struct pt *pt))
     while(1) {
 
         if (counter == 0){
+           // poten = ReadADC10(1);
             //updates the gains value on the screen every 1 second
-            tft_fillRoundRect(0,10, 50, 14, 1, ILI9340_BLACK);// x,y,w,h,radius,color
+            tft_fillRoundRect(0,10, 100, 14, 1, ILI9340_BLACK);// x,y,w,h,radius,color
             tft_setCursor(0, 10);
             tft_setTextColor(ILI9340_YELLOW); tft_setTextSize(2);
             sprintf(buffer,"P : %d", P_gain);
             tft_writeString(buffer);
            
             
-            tft_fillRoundRect(0,30, 50, 14, 1, ILI9340_BLACK);// x,y,w,h,radius,color
+            tft_fillRoundRect(0,30, 100, 14, 1, ILI9340_BLACK);// x,y,w,h,radius,color
             tft_setCursor(0, 30);
             tft_setTextColor(ILI9340_YELLOW); tft_setTextSize(2);
             sprintf(buffer,"D : %d", D_gain);
             tft_writeString(buffer);
            
             
-            tft_fillRoundRect(0,50, 50, 14, 1, ILI9340_BLACK);// x,y,w,h,radius,color
+            tft_fillRoundRect(0,50, 100, 14, 1, ILI9340_BLACK);// x,y,w,h,radius,color
             tft_setCursor(0, 50);
             tft_setTextColor(ILI9340_YELLOW); tft_setTextSize(2);
             sprintf(buffer,"I : %d", I_gain);
             tft_writeString(buffer);
+            
+                     
+            tft_fillRoundRect(0,100, 100, 14, 1, ILI9340_BLACK);// x,y,w,h,radius,color
+            tft_setCursor(0, 100);
+            tft_setTextColor(ILI9340_YELLOW); tft_setTextSize(2);
+            sprintf(buffer,"er: %d", error);
+            tft_writeString(buffer);
+            
+            
+            tft_fillRoundRect(0,80, 150, 14, 1, ILI9340_BLACK);// x,y,w,h,radius,color
+            tft_setCursor(0, 80);
+            tft_setTextColor(ILI9340_YELLOW); tft_setTextSize(2);
+            sprintf(buffer,"Theta: %d", desired_angle);
+            tft_writeString(buffer);
+            
+            
+            time++;
         }
         
-        
-//            tft_fillRoundRect(0,80, 100, 14, 1, ILI9340_BLACK);// x,y,w,h,radius,color
-//            tft_setCursor(0, 80);
-//            tft_setTextColor(ILI9340_YELLOW); tft_setTextSize(2);
-//            sprintf(buffer,"I : %d", adc1);
-//            tft_writeString(buffer);
-        
-        
-  
+
         
     //read button press 
     button1 = mPORTAReadBits(BIT_3); 
     button2 = mPORTAReadBits(BIT_4);
     
     
-    if (button1 != 0 ){
-        state = (state + 1) % 3;
+ if (button1 != 0 ){
+        state = (state + 1) % 4;
     
     }
-    else if (button2 !=0){
-         poten = ReadADC10(2); // reading in the user input
+    else if (button2 != 0){
+         poten = ReadADC10(1); // reading in the user input
          if (state == 0){
          //we're setting the P - gains term
-             P_gain = poten>>2; // sets P the range from 0 to 255
+             P_gain = 2*poten; // sets P the range from 0 to 2000
          }
          else if (state == 1){
          //we're setting I - gains term 
-             I_gain = poten>>8; //sets it to range from 0 to 4 to be used for shifting 
+             I_gain = poten >>8; //sets I offset from 0 to 4
+             
+         }
+         else if (state == 2) {
+         //we're setting D - gains term e^10adc units per factor of e
+             D_gain = poten*20; //sets P to the range 0 to 20,460 by increments of 20
          }
          else {
-         //we're setting D - gains term
-             D_gain = poten*10; //sets D to the range 0 to 1023 by increments of 10
+
+             if (poten < 418 ){ desired_angle = 418;}
+             
+             else if (poten > 598) {desired_angle = 598;}
+             else { desired_angle = poten;}
+             
+             
          }
     
     }
-                     
     counter = (counter +1) % 30;
+                     
     
-    //USE THIS FOR DEMO
-//         
-//         if (counter == 0 && button1 != 0){
-//        desired_angle = desired_hanging;    
-//    }
-//    else if (counter == 0 && button1 == 0 ){
-//        desired_angle = desired_angle_0;
-//    }
-//    else if (counter == 5){
-//        desired_angle = desired_angle_30;
-//    } 
-//    else if (counter == 10){
-//        desired_angle = desired_angle_neg30;
-//    }
-//    else if (counter == 15){
-//        desired_angle = desired_angle_0;
-//    }
-//    else{
-//        desired_angle = desired_angle; 
-//    }
-         
-         
-        tft_fillRoundRect(0,80, 50, 14, 1, ILI9340_BLACK);// x,y,w,h,radius,color
-        tft_setCursor(0, 80);
-        tft_setTextColor(ILI9340_YELLOW); tft_setTextSize(2);
-        sprintf(buffer,"PWM : %d", pwm_on_time);
-        tft_writeString(buffer);         
 
-        tft_fillRoundRect(0,100, 50, 14, 1, ILI9340_BLACK);// x,y,w,h,radius,color
-        tft_setCursor(0, 100);
-        tft_setTextColor(ILI9340_YELLOW); tft_setTextSize(2);
-        sprintf(buffer,"error : %d", error);
-        tft_writeString(buffer); 
+         
+ 
         
         PT_YIELD_TIME_msec(32);
         // NEVER exit while
@@ -395,7 +376,11 @@ void main(void) {
     // possibles SPI_OPEN_CKP_HIGH;   SPI_OPEN_SMP_END;  SPI_OPEN_CKE_REV
     // For any given peripherial, you will need to match these
     // clk divider set to 2 for 20 MHz
+    
+     PPSOutput(2, RPB5, SDO2);
+    PPSOutput(4, RPB10, SS2);
     SpiChnOpen(SPI_CHANNEL2, SPI_OPEN_ON | SPI_OPEN_MODE16 | SPI_OPEN_MSTEN | SPI_OPEN_CKE_REV , 2);
+    
   // end DAC setup
     
   // === config threads ==========
