@@ -181,7 +181,7 @@ void __ISR(_TIMER_2_VECTOR, ipl2) Timer2Handler(void)
     DAC_dataB = motor_disp>>4; // (motor control signal) 
      
     // CS low to start transaction
-     mPORTBClearBits(BIT_4); // start transaction - does it matter?
+     mPORTBClearBits(BIT_4); // start transaction
      // write to spi2
      WriteSPI2(DAC_config_chan_A | DAC_dataA);
     // test for done
@@ -192,7 +192,7 @@ void __ISR(_TIMER_2_VECTOR, ipl2) Timer2Handler(void)
      // CS low to start transaction
      mPORTBClearBits(BIT_4); // start transaction
      // write to spi2
-     WriteSPI2(DAC_config_chan_B | DAC_dataB); //write to channel B?
+     WriteSPI2(DAC_config_chan_B | DAC_dataB); //write to channel B
     // test for done
     while (SPI2STATbits.SPIBUSY); // wait for end of transaction
      // CS high
@@ -386,7 +386,7 @@ void main(void) {
     // For any given peripherial, you will need to match these
     // clk divider set to 2 for 20 MHz
     
-     PPSOutput(2, RPB5, SDO2);
+    PPSOutput(2, RPB5, SDO2);
     PPSOutput(4, RPB10, SS2);
     SpiChnOpen(SPI_CHANNEL2, SPI_OPEN_ON | SPI_OPEN_MODE16 | SPI_OPEN_MSTEN | SPI_OPEN_CKE_REV , 2);
     
