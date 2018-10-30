@@ -49,13 +49,12 @@
 volatile unsigned int DAC_dataA ;// output value
 volatile unsigned int DAC_dataB ;// output value
 static  int adc1; //actual beam angle
-static  int adc5; //motor control signal
 
 
 volatile SpiChannel spiChn = SPI_CHANNEL2 ;	// the SPI channel to use
 volatile int spiClkDiv = 2 ; // 20 MHz max speed for this DAC
 
-volatile int P_gain = 1400, D_gain = 17000, I_gain = 4 ;//200, 10000, 3
+volatile int P_gain = 1400, D_gain = 17000, I_gain = 4 ;
 
 //PID control stuff
 volatile int errorArray [5] = {0, 0, 0, 0, 0}; 
@@ -77,7 +76,7 @@ volatile int desired_angle= 508;
 
 static int last_iterm =0;
 
-volatile int pwm_on_time = 40000; //need to tune this  
+volatile int pwm_on_time = 40000; 
 
 volatile int motor_disp = 0; 
 
@@ -91,7 +90,7 @@ void __ISR(_TIMER_2_VECTOR, ipl2) Timer2Handler(void)
     mT2ClearIntFlag();
     
     
-        // TO READ the adc channel
+    // TO READ the adc channel
     adc1 = ReadADC10(0); //actual beam angle 
     
     //setting up the demonstration so that when 5 seconds have passed, the beam 
@@ -371,7 +370,7 @@ void main(void) {
     mT2ClearIntFlag(); // and clear the interrupt flag 
     
     // set up compare3 for PWM mode 
-    OpenOC3(OC_ON | OC_TIMER2_SRC | OC_PWM_FAULT_PIN_DISABLE , pwm_on_time, pwm_on_time); //pwm_on_time????
+    OpenOC3(OC_ON | OC_TIMER2_SRC | OC_PWM_FAULT_PIN_DISABLE , pwm_on_time, pwm_on_time); 
     // OC3 is PPS group 4, map to RPB9 (pin 18) 
     PPSOutput(4, RPB9, OC3);
     
@@ -398,13 +397,11 @@ void main(void) {
     PT_setup();
   
     //Two ADC channels (one for angle sensor, one for parameter setting)
-    //Perhaps use A5 and A1.
     set_up_ADC();
     
     //RA4 and RA3 push button set up 
     mPORTASetPinsDigitalIn(BIT_3|BIT_4);
     EnablePullDownA( BIT_3 | BIT_4);
-    //mPORTAReadBits(BIT_3) or mPORTAReadBits(BIT_4)
 
     
 
@@ -422,7 +419,7 @@ void main(void) {
   tft_setRotation(0); // Use tft_setRotation(1) for 320x240
 
   // seed random color
-  srand(1);
+  srand(1);     
   
   // round-robin scheduler for threads
   while (1){
