@@ -14,7 +14,12 @@
 
 // need for accelerometer reading
 #include "i2c_helper.h"
+
+// string buffer
+char buffer[60];
+
 ////////////////////////////////////
+
 
 static struct pt pt_send, pt_motor;
 // Default Accelerometer max 1g value
@@ -134,7 +139,7 @@ void main(void) {
   
    while (1){
       //enables the accelerometer reading
-      PT_SCHEDULE(protothread_acel(&pt_accel));
+      PT_SCHEDULE(protothread_acel(&pt_send));
 
       }
 }
