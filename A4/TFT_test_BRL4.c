@@ -49,44 +49,139 @@
 volatile unsigned int DAC_dataA ;// output value
 volatile unsigned int DAC_dataB ;// output value
 static  int adc1; //actual beam angle
-static  int adc5; //motor control signal
 
 
 volatile SpiChannel spiChn = SPI_CHANNEL2 ;	// the SPI channel to use
 volatile int spiClkDiv = 2 ; // 20 MHz max speed for this DAC
 
-volatile int P_gain = 200, D_gain = 10000, I_gain = 3;
-static char cmd[16]; 
-static int value;
+volatile int P_gain = 1400, D_gain = 17000, I_gain = 4 ;
 
-//from example 
-int generate_period = 2000 ;
-int pwm_on_time = 500 ;
+//PID control stuff
+volatile int errorArray [5] = {0, 0, 0, 0, 0}; 
+volatile int pidCounter = 0;
+volatile int error = 0; 
+volatile int pterm;
+volatile int iterm;
+volatile int dterm;
+static int errorSum = 0;
+volatile int pid; 
 
+//to obtain desired angle
+//read the potentiometer value between 0 and 1023 at 0 30 and -30
+static int desired_angle_30 = 598;
+static int desired_angle_0 = 515;
+static int desired_angle_neg30 = 418;
+static int desired_hanging = 243; 
+volatile int desired_angle= 508; 
 
+static int last_iterm =0;
+
+volatile int pwm_on_time = 40000; 
+
+volatile int motor_disp = 0; 
+
+static int time =0;
+      
 // system 1 second interval tick
 int sys_time_seconds ;
+
 void __ISR(_TIMER_2_VECTOR, ipl2) Timer2Handler(void)
 {
     mT2ClearIntFlag();
     
-    // TO READ the two channels
-    adc1 = ReadADC10(0); //actual beam angle 
-    adc5 = ReadADC10(1); //motor control signal
     
-    // generate  ramp
-    // at 100 ksample/sec, 2^12 samples (4096) on one ramp up
-    // yields 100000/4096 = 24.4 Hz.
-     DAC_dataA = adc1 << 2  ; // for testing (actual beam angle) 
-     DAC_dataB = adc5 >> 4; //for testing (motor control signal) 
+    // TO READ the adc channel
+    adc1 = ReadADC10(0); //actual beam angle 
+    
+    //setting up the demonstration so that when 5 seconds have passed, the beam 
+    //angle is 30 degrees
+    if (time == 6) {
+        errorSum = 0;
+        desired_angle= desired_angle_30;
+    
+    }
+    //when 10 seconds have passed, the beam angle is set to negative 30 degrees
+    else if (time == 12){
+        errorSum = 0;
+        desired_angle = desired_angle_neg30;
+    
+    }
+    //when 15 seconds have passed, the beam angle is set back to 0 degrees 
+    else if (time == 18) {
+        errorSum = 0;
+        desired_angle = desired_angle_0;
+    
+    }
+   
+ 
+    //calculate the error of the beam angle by subtracted the actual value from
+    //the desired angle 
+    error = desired_angle - adc1; 
+    //calculate the p term of PID by multiplying the proportional gain with the 
+    //error
+     pterm = P_gain * error;
+
+    //calculate the d term of PID by multiplying the derivative gain with the 
+     //difference between the current error and the previous error (from 5 times 
+     //ago)
+    dterm = D_gain * (error - errorArray[pidCounter]);  
+    
+    //update the errorArray with the current error
+    errorArray[pidCounter]= error;
+    
+    //increment the pidCounter (which indexes in the errorArray) and mod it by 5 
+    //so the index ranges from 0-4 only
+    pidCounter = (pidCounter+ 1)%5; 
+
+    
+    //update errorSum so that it is 0 if error is ever equal to 0
+    if(error == 0){
+        errorSum = 0;
+        //calculate the i term of PID by multiplying the previous iterm by a small 
+        //number
+        iterm = 0.95*last_iterm; // multiply by 0.9 so that iterm does not entirely drop to 0
+
+    }
+    else{
+        //update errorSum
+        errorSum = errorSum + (error>>I_gain);
+        //update iterm and the previous iterm
+        iterm = errorSum; 
+        last_iterm = iterm;
+    }
      
+       
      
-     //SetDCOC3PWM(pwm_on_time);
+    //calculate the PID term 
+    int pid = pterm + dterm+ iterm; 
+    
+
+    //ensures that PID value is between 0-40000 because that is what the motor
+    //can effectively read values
+    if (pid < 0){
+        pid = 0;
+    }
+    if (pid > 40000){
+        pid = 40000; 
+    }
+   
+    //write to potentiometer that drives the angle
+    pwm_on_time = pid;  
+    
+    //drive the motor 
+    SetDCOC3PWM(pwm_on_time);
+    
+    
+    //digital low pass filter for motor
+    motor_disp = motor_disp + ((pwm_on_time - motor_disp)>>4); 
+    
+
+    //write to the DAC
+    DAC_dataA = adc1 << 2  ; //(actual beam angle) 
+    DAC_dataB = motor_disp>>4; // (motor control signal) 
      
     // CS low to start transaction
-     mPORTBClearBits(BIT_4); // start transaction - does it matter?
-    // test for ready
-     while (TxBufFullSPI2());
+     mPORTBClearBits(BIT_4); // start transaction
      // write to spi2
      WriteSPI2(DAC_config_chan_A | DAC_dataA);
     // test for done
@@ -96,10 +191,8 @@ void __ISR(_TIMER_2_VECTOR, ipl2) Timer2Handler(void)
      
      // CS low to start transaction
      mPORTBClearBits(BIT_4); // start transaction
-    // test for ready
-     while (TxBufFullSPI2());
      // write to spi2
-     WriteSPI2(DAC_config_chan_B | DAC_dataB);
+     WriteSPI2(DAC_config_chan_B | DAC_dataB); //write to channel B
     // test for done
     while (SPI2STATbits.SPIBUSY); // wait for end of transaction
      // CS high
@@ -114,8 +207,8 @@ static struct pt pt_timer ;
 
 // system 1 second interval tick
 int counter=0 ;
-
-static int state, poten, button1, button2;
+//initialize values 
+static int state=0, poten=0, button1=0, button2=0;
 
 char buffer [60];
 
@@ -133,66 +226,91 @@ static PT_THREAD (protothread_timer(struct pt *pt))
     while(1) {
 
         if (counter == 0){
+           // poten = ReadADC10(1);
             //updates the gains value on the screen every 1 second
-            tft_fillRoundRect(0,10, 50, 14, 1, ILI9340_BLACK);// x,y,w,h,radius,color
+            tft_fillRoundRect(0,10, 100, 14, 1, ILI9340_BLACK);// x,y,w,h,radius,color
             tft_setCursor(0, 10);
             tft_setTextColor(ILI9340_YELLOW); tft_setTextSize(2);
             sprintf(buffer,"P : %d", P_gain);
             tft_writeString(buffer);
            
             
-            tft_fillRoundRect(0,30, 50, 14, 1, ILI9340_BLACK);// x,y,w,h,radius,color
+            tft_fillRoundRect(0,30, 100, 14, 1, ILI9340_BLACK);// x,y,w,h,radius,color
             tft_setCursor(0, 30);
             tft_setTextColor(ILI9340_YELLOW); tft_setTextSize(2);
             sprintf(buffer,"D : %d", D_gain);
             tft_writeString(buffer);
            
             
-            tft_fillRoundRect(0,50, 50, 14, 1, ILI9340_BLACK);// x,y,w,h,radius,color
+            tft_fillRoundRect(0,50, 100, 14, 1, ILI9340_BLACK);// x,y,w,h,radius,color
             tft_setCursor(0, 50);
             tft_setTextColor(ILI9340_YELLOW); tft_setTextSize(2);
             sprintf(buffer,"I : %d", I_gain);
             tft_writeString(buffer);
+            
+            //updates the error value on the screen every 1 second
+
+            tft_fillRoundRect(0,100, 100, 14, 1, ILI9340_BLACK);// x,y,w,h,radius,color
+            tft_setCursor(0, 100);
+            tft_setTextColor(ILI9340_YELLOW); tft_setTextSize(2);
+            sprintf(buffer,"er: %d", error);
+            tft_writeString(buffer);
+            
+            //updates the desired angle value on the screen every 1 second
+
+            tft_fillRoundRect(0,80, 150, 14, 1, ILI9340_BLACK);// x,y,w,h,radius,color
+            tft_setCursor(0, 80);
+            tft_setTextColor(ILI9340_YELLOW); tft_setTextSize(2);
+            sprintf(buffer,"Theta: %d", desired_angle);
+            tft_writeString(buffer);
+            
+            //increments time
+            time++;
         }
         
-//        adc1 = ReadADC10(0);
-//        
-//            tft_fillRoundRect(0,80, 100, 14, 1, ILI9340_BLACK);// x,y,w,h,radius,color
-//            tft_setCursor(0, 80);
-//            tft_setTextColor(ILI9340_YELLOW); tft_setTextSize(2);
-//            sprintf(buffer,"I : %d", adc1);
-//            tft_writeString(buffer);
+
         
-         //read button press 
-         button1 = mPORTAReadBits(BIT_3); 
-         button2 = mPORTAReadBits(BIT_4);
+    //read button press 
+    button1 = mPORTAReadBits(BIT_3); 
+    button2 = mPORTAReadBits(BIT_4);
     
-    
-    if (button1 != 0 ){
-        state = (state + 1) % 3;
+ //if the button1 is pressed, update the state   
+ if (button1 != 0 ){
+        state = (state + 1) % 4;
     
     }
-    else if (button2 !=0){
-         poten = ReadADC10(2); // reading in the user input
+ //if button2 is pressed, update the gains term 
+ else if (button2 != 0){
+         poten = ReadADC10(1); // reading in the user input
          if (state == 0){
          //we're setting the P - gains term
-             P_gain = poten>>2; // sets P the range from 0 to 255
+             P_gain = 2*poten; // sets P the range from 0 to 2000
          }
          else if (state == 1){
          //we're setting I - gains term 
-             I_gain = poten>>8; //sets it to range from 0 to 4 to be used for shifting 
+             I_gain = poten >>8; //sets I offset from 0 to 4
+             
+         }
+         else if (state == 2) {
+         //we're setting D - gains term e^10adc units per factor of e
+             D_gain = poten*20; //sets P to the range 0 to 20,460 by increments of 20
          }
          else {
-         //we're setting D - gains term
-             D_gain = poten*10; //sets P to the range 0 to 10,230 by increments of 10
+
+             if (poten < 418 ){ desired_angle = 418;}
+             
+             else if (poten > 598) {desired_angle = 598;}
+             else { desired_angle = poten;}
+             
+             
          }
     
     }
-         counter = (counter +1) % 30;
-
-        PT_YIELD_TIME_msec(32);
-        // NEVER exit while
-      } // END WHILE(1)
+    //increment timer 
+    counter = (counter +1) % 30;
+    PT_YIELD_TIME_msec(32);
+    // NEVER exit while
+  } // END WHILE(1)
   PT_END(pt);
 } // timer thread
 
@@ -233,10 +351,8 @@ void set_up_ADC(void){
 
     EnableADC10(); // Enable the ADC
 
-    // TO READ the two channels
+    // TO READ the channel
     // adc1 = ReadADC10(0);
-    // adc5 = ReadADC10(1); 
-    // adc11 = ReadADC10(2);
     ///////////////////////////////////////////////////////
 
 }
@@ -248,13 +364,13 @@ void main(void) {
 
  // === Config timer and output compare to make PWM ======== 
     // set up timer2 to generate the wave period every  1 mSec!
-    OpenTimer2(T2_ON | T2_SOURCE_INT | T2_PS_1_1, 40000);
+    OpenTimer2(T2_ON | T2_SOURCE_INT | T2_PS_1_1, 40000); //generate period
     // Need ISR to compute PID controller 
     ConfigIntTimer2(T2_INT_ON | T2_INT_PRIOR_2); 
     mT2ClearIntFlag(); // and clear the interrupt flag 
     
     // set up compare3 for PWM mode 
-    OpenOC3(OC_ON | OC_TIMER2_SRC | OC_PWM_FAULT_PIN_DISABLE , 0, 40000); // 
+    OpenOC3(OC_ON | OC_TIMER2_SRC | OC_PWM_FAULT_PIN_DISABLE , pwm_on_time, pwm_on_time); 
     // OC3 is PPS group 4, map to RPB9 (pin 18) 
     PPSOutput(4, RPB9, OC3);
     
@@ -269,21 +385,23 @@ void main(void) {
     // possibles SPI_OPEN_CKP_HIGH;   SPI_OPEN_SMP_END;  SPI_OPEN_CKE_REV
     // For any given peripherial, you will need to match these
     // clk divider set to 2 for 20 MHz
+    
+    PPSOutput(2, RPB5, SDO2);
+    PPSOutput(4, RPB10, SS2);
     SpiChnOpen(SPI_CHANNEL2, SPI_OPEN_ON | SPI_OPEN_MODE16 | SPI_OPEN_MSTEN | SPI_OPEN_CKE_REV , 2);
+    
   // end DAC setup
     
   // === config threads ==========
   // turns OFF UART support and debugger pin, unless defines are set
-  PT_setup();
+    PT_setup();
   
     //Two ADC channels (one for angle sensor, one for parameter setting)
-    //Perhaps use A5 and A1.
     set_up_ADC();
     
     //RA4 and RA3 push button set up 
     mPORTASetPinsDigitalIn(BIT_3|BIT_4);
     EnablePullDownA( BIT_3 | BIT_4);
-    //mPORTAReadBits(BIT_3) or mPORTAReadBits(BIT_4)
 
     
 
@@ -301,7 +419,7 @@ void main(void) {
   tft_setRotation(0); // Use tft_setRotation(1) for 320x240
 
   // seed random color
-  srand(1);
+  srand(1);     
   
   // round-robin scheduler for threads
   while (1){
@@ -310,4 +428,3 @@ void main(void) {
   } // main
 
 // === end  ======================================================
-
